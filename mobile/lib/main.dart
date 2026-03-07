@@ -10,7 +10,7 @@ Future<void> main() async {
   // Initialize Supabase
   await Supabase.initialize(
     url: 'https://tzrouiuqpirmsemkodrt.supabase.co',
-    anonKey: 'sb_secret_z7oY3_lYzVbA2yK-pCLLmQ_LKwjUtNv',
+    anonKey: 'sb_publishable_tvxltrMGcMPfhW86JUFkBg__BwKgGxu',
   );
 
   runApp(const WalkSafeApp());
