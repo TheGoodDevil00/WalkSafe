@@ -46,3 +46,14 @@ class RiskEngine:
         ) * night_multiplier
 
         return min(max(total_risk, 0.0), 1.0)
+
+    def calculate_segment_risk(self, distance_weight: float, safety_score: float) -> float:
+        """
+        Calculates a segment-level risk value using the global formula:
+
+            risk = distance_weight + (100 - safety_score)
+
+        where `safety_score` is in the range [0, 100].
+        """
+        clamped_score = max(0.0, min(100.0, float(safety_score)))
+        return float(distance_weight) + (100.0 - clamped_score)
