@@ -8,16 +8,29 @@ from pyproj import Transformer
 from shapely.geometry import LineString, MultiLineString, Point
 from shapely.ops import linemerge, transform
 
-from logic.generate_street_graph import (
-    PUNE_CENTER_LAT,
-    PUNE_CENTER_LON,
-    PUNE_RADIUS_METERS,
-    generate_street_graph,
-)
-from logic.safety_feature_engine import (
-    SafetyFeatureEngine,
-    load_incidents_from_supabase,
-)
+try:
+    from logic.generate_street_graph import (
+        PUNE_CENTER_LAT,
+        PUNE_CENTER_LON,
+        PUNE_RADIUS_METERS,
+        generate_street_graph,
+    )
+    from logic.safety_feature_engine import (
+        SafetyFeatureEngine,
+        load_incidents_from_supabase,
+    )
+except ImportError:  # pragma: no cover
+    # Allows running this module directly from the logic directory.
+    from generate_street_graph import (
+        PUNE_CENTER_LAT,
+        PUNE_CENTER_LON,
+        PUNE_RADIUS_METERS,
+        generate_street_graph,
+    )
+    from safety_feature_engine import (
+        SafetyFeatureEngine,
+        load_incidents_from_supabase,
+    )
 
 OUTPUT_PATH = Path(__file__).resolve().parent / "output" / "pune_safety_segments.geojson"
 WGS84_CRS = "EPSG:4326"

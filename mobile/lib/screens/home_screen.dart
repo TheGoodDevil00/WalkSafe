@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../models/logic_safety_score.dart';
 import '../models/scored_route.dart';
 import '../models/safety_zone.dart';
+import '../services/logic_safety_api_service.dart';
 import '../services/location_service.dart';
 import '../services/routing_service.dart';
 import '../services/safety_heatmap_service.dart';
@@ -27,6 +29,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final MapController _mapController = MapController();
   final LocationService _locationService = LocationService();
   final RoutingService _routingService = RoutingService();
+  final LogicSafetyApiService _logicSafetyApiService = LogicSafetyApiService();
   final SafetyHeatmapService _heatmapService = SafetyHeatmapService();
   final SosService _sosService = SosService();
 
@@ -36,6 +39,8 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Marker> _markers = <Marker>[];
   List<Polyline> _routePolylines = <Polyline>[];
   ScoredRoute? _selectedRoute;
+  LogicSafetyScore? _logicSafetyScore;
+  String _logicApiStatus = 'Not queried yet';
   bool _isLoadingLocation = true;
   bool _isLoadingRoute = false;
 
@@ -72,6 +77,8 @@ class _HomeScreenState extends State<HomeScreen> {
       _startPoint = center;
       _markers = _buildNavigationMarkers(start: center);
       _selectedRoute = null;
+      _logicSafetyScore = null;
+      _logicApiStatus = 'Not queried yet';
       _routePolylines = <Polyline>[];
     });
 
@@ -91,6 +98,8 @@ class _HomeScreenState extends State<HomeScreen> {
         start: _startPoint,
         destination: destination,
       );
+      _logicSafetyScore = null;
+      _logicApiStatus = 'Querying logic safety API...';
     });
 
     try {
@@ -103,11 +112,26 @@ class _HomeScreenState extends State<HomeScreen> {
         return;
       }
 
+      // Step 3: Query backend safety score for the tapped destination.
+      LogicSafetyScore? logicSafetyScore;
+      String logicApiStatus;
+      try {
+        logicSafetyScore = await _logicSafetyApiService.getNearestSafetyScore(
+          destination,
+        );
+        logicApiStatus = 'Connected (${_logicSafetyApiService.baseUrl})';
+      } catch (_) {
+        logicApiStatus =
+            'Unavailable (${_logicSafetyApiService.baseUrl}) - check uvicorn';
+      }
+
       final List<LatLng> route = safestRoute?.points ?? <LatLng>[];
 
-      // Step 3: Draw the route polyline once points are available.
+      // Step 4: Draw the route polyline once points are available.
       setState(() {
         _selectedRoute = safestRoute;
+        _logicSafetyScore = logicSafetyScore;
+        _logicApiStatus = logicApiStatus;
         _routePolylines = route.isEmpty
             ? <Polyline>[]
             : <Polyline>[
@@ -115,7 +139,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   points: route,
                   strokeWidth: 6,
                   color: _routeColorForSafety(
-                    safestRoute?.averageSafetyScore ?? 0,
+                    logicSafetyScore?.safetyScore ??
+                        safestRoute?.averageSafetyScore ??
+                        0,
                   ),
                   borderStrokeWidth: 1.5,
                   borderColor: Colors.white,
@@ -127,6 +153,15 @@ class _HomeScreenState extends State<HomeScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('No walking route found for the selected point.'),
+          ),
+        );
+      }
+      if (logicSafetyScore == null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Logic API not reachable. Route rendered without backend score.',
+            ),
           ),
         );
       }
@@ -340,6 +375,15 @@ class _HomeScreenState extends State<HomeScreen> {
                       Text(
                         'Safety: ${_selectedRoute!.averageSafetyScore.toStringAsFixed(1)}/100',
                       ),
+                      Text('Logic API: $_logicApiStatus'),
+                      if (_logicSafetyScore != null)
+                        Text(
+                          'Backend segment score: ${_logicSafetyScore!.safetyScore.toStringAsFixed(1)}/100',
+                        ),
+                      if (_logicSafetyScore != null)
+                        Text(
+                          'Nearest segment: ${_logicSafetyScore!.segmentId} (${_logicSafetyScore!.distanceToQueryMeters.toStringAsFixed(1)}m away)',
+                        ),
                       Text(
                         'Risk: ${_selectedRoute!.totalRisk.toStringAsFixed(2)} = distance_weight + safety_penalty',
                       ),

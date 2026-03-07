@@ -7,17 +7,27 @@ from typing import Any, Dict, Optional
 
 import geopandas as gpd
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from pyproj import Transformer
 from shapely.geometry import Point
 from shapely.ops import transform
 from shapely.strtree import STRtree
 
-from logic.generate_safety_map import (
-    METRIC_CRS,
-    OUTPUT_PATH,
-    WGS84_CRS,
-    generate_safety_dataset,
-)
+try:
+    from .generate_safety_map import (
+        METRIC_CRS,
+        OUTPUT_PATH,
+        WGS84_CRS,
+        generate_safety_dataset,
+    )
+except ImportError:  # pragma: no cover
+    # Allows running as a direct script: `python logic/api.py`.
+    from generate_safety_map import (
+        METRIC_CRS,
+        OUTPUT_PATH,
+        WGS84_CRS,
+        generate_safety_dataset,
+    )
 
 
 class SafetyMapIndex:
@@ -83,6 +93,15 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# CORS for Flutter web (Chrome) local development.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 _safety_index: Optional[SafetyMapIndex] = None
 
 
@@ -141,3 +160,9 @@ def safety_score(
             "distance_to_query_meters": round(distance_meters, 2),
         },
     }
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("logic.api:app", host="127.0.0.1", port=9123, reload=False)
