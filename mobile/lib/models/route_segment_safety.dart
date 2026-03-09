@@ -13,6 +13,13 @@ class RouteSegmentSafety {
     required this.distanceWeight,
     required this.safetyPenalty,
     required this.risk,
+    this.segmentId,
+    this.safetyLevel,
+    this.baseSafetyScore,
+    this.incidentDensity,
+    this.lightingHeuristic,
+    this.timePenalty,
+    this.distanceToQuery,
   });
 
   final LatLng start;
@@ -33,4 +40,13 @@ class RouteSegmentSafety {
   final double distanceWeight;
   final double safetyPenalty;
   final double risk;
+
+  // Backend-supplied metadata for rendering/diagnostics.
+  final String? segmentId;
+  final String? safetyLevel;
+  final double? baseSafetyScore;
+  final double? incidentDensity;
+  final double? lightingHeuristic;
+  final double? timePenalty;
+  final double? distanceToQuery;
 }
