@@ -43,8 +43,8 @@ dist/
 ############################
 # OSM / Data Pipeline Output
 ############################
-logic/output/
-*.geojson
+# logic/output/
+# *.geojson
 
 ############################
 # Flutter / Dart
