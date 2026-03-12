@@ -38,7 +38,7 @@ class ApiClient {
             RoutePath(
               id: key,
               points: points,
-              totalDistance: 0, // TODO calculate
+              totalDistance: 0, //todo calc
               safetyScore: key == 'safest' ? 0.9 : 0.5,
               riskSegments: [],
             ),

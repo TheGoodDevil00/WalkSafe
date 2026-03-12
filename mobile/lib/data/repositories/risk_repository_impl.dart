@@ -2,7 +2,7 @@ import '../../domain/entities/risk.dart';
 import '../../domain/repositories/risk_repository.dart';
 
 class RiskRepositoryImpl implements RiskRepository {
-  // TODO: Inject remote data source
+  // todo: Inject remote data source
 
   @override
   Future<Risk> getRiskForLocation(double lat, double lon) async {
