@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../services/location_service.dart';
 import '../services/sos_service.dart';
 
 class EmergencySosScreen extends StatefulWidget {
@@ -10,7 +11,11 @@ class EmergencySosScreen extends StatefulWidget {
 }
 
 class _EmergencySosScreenState extends State<EmergencySosScreen> {
+  static const double _fallbackLat = 18.5204;
+  static const double _fallbackLon = 73.8567;
+
   final SosService _sosService = SosService();
+  final LocationService _locationService = LocationService();
   bool _sending = false;
 
   Future<void> _sendEmergencyAlert() async {
@@ -18,7 +23,11 @@ class _EmergencySosScreenState extends State<EmergencySosScreen> {
       _sending = true;
     });
 
-    await _sosService.sendEmergencyAlert();
+    final location = await _locationService.getCurrentLocation();
+    final bool sent = await _sosService.sendEmergencyAlert(
+      latitude: location?.latitude ?? _fallbackLat,
+      longitude: location?.longitude ?? _fallbackLon,
+    );
     if (!mounted) {
       return;
     }
@@ -31,8 +40,12 @@ class _EmergencySosScreenState extends State<EmergencySosScreen> {
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: const Text('Alert Sent'),
-          content: const Text('Emergency contacts notified'),
+          title: Text(sent ? 'Alert Sent' : 'Alert Failed'),
+          content: Text(
+            sent
+                ? 'Emergency alert has been sent to backend.'
+                : 'Could not reach backend. Call local emergency services immediately.',
+          ),
           actions: <Widget>[
             TextButton(
               onPressed: () => Navigator.of(context).pop(),

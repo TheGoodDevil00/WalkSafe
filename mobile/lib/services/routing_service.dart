@@ -39,6 +39,16 @@ class RoutingService {
   }
 
   Future<ScoredRoute?> getSafestRoute(LatLng start, LatLng end) async {
+    // Preferred path: backend orchestrates OSRM alternatives + risk ranking.
+    final ScoredRoute? backendConsolidatedRoute = await _fetchRouteSafe(
+      start,
+      end,
+    );
+    if (backendConsolidatedRoute != null) {
+      return backendConsolidatedRoute;
+    }
+
+    // Fallback path: mobile fetches OSRM alternatives and backend scores each.
     // Step 1: Build OSRM walking URL and request alternative candidates.
     final Uri uri = Uri.parse(
       '$_osrmBaseUrl/route/v1/foot/'
@@ -130,6 +140,61 @@ class RoutingService {
     });
 
     return scoredRoutes.first;
+  }
+
+  Future<ScoredRoute?> _fetchRouteSafe(LatLng start, LatLng end) async {
+    final Uri uri = Uri.parse('$_riskApiBaseUrl/route-safe').replace(
+      queryParameters: <String, String>{
+        'start_lat': start.latitude.toString(),
+        'start_lon': start.longitude.toString(),
+        'end_lat': end.latitude.toString(),
+        'end_lon': end.longitude.toString(),
+        'alternatives': '3',
+      },
+    );
+
+    final http.Response? response = await _safeGet(uri);
+    if (response == null || response.statusCode != 200) {
+      return null;
+    }
+
+    final Map<String, dynamic>? payload = _tryParseJsonMap(response.body);
+    if (payload == null) {
+      return null;
+    }
+
+    final Map<String, dynamic>? selectedRoute = _coerceMap(
+      payload['selected_route'],
+    );
+    if (selectedRoute == null) {
+      return null;
+    }
+
+    final List<LatLng> points = _parseCoordinateList(selectedRoute['coordinates']);
+    if (points.length < 2) {
+      return null;
+    }
+
+    final List<RouteSegmentSafety> segments = _parseBackendSegments(
+      selectedRoute['segments'],
+    );
+    if (segments.isEmpty) {
+      return null;
+    }
+
+    final Map<String, dynamic>? summary = _coerceMap(selectedRoute['summary']);
+    return ScoredRoute(
+      points: points,
+      segments: segments,
+      totalDistanceMeters:
+          _asDouble(summary?['total_distance']) ?? _polylineDistanceMeters(points),
+      averageSafetyScore:
+          _asDouble(summary?['average_safety_score']) ??
+          _safetyScoreService.calculateAverageSafetyScore(segments),
+      totalRisk:
+          _asDouble(summary?['total_risk']) ??
+          _safetyScoreService.calculateRouteRisk(segments),
+    );
   }
 
   Future<ScoredRoute?> _scoreRouteViaBackend(
@@ -339,6 +404,21 @@ class RoutingService {
       return null;
     }
     return LatLng(lat, lon);
+  }
+
+  List<LatLng> _parseCoordinateList(Object? value) {
+    if (value is! List) {
+      return <LatLng>[];
+    }
+
+    final List<LatLng> points = <LatLng>[];
+    for (final dynamic item in value) {
+      final LatLng? point = _parseCoordinate(item);
+      if (point != null) {
+        points.add(point);
+      }
+    }
+    return points;
   }
 
   double? _asDouble(Object? value) {

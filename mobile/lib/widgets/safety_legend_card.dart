@@ -13,8 +13,8 @@ class SafetyLegendCard extends StatelessWidget {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: <Widget>[
-            _LegendItem(label: 'Unsafe', color: Colors.red),
-            _LegendItem(label: 'Moderate', color: Colors.yellow),
+            _LegendItem(label: 'Risky', color: Colors.red),
+            _LegendItem(label: 'Cautious', color: Colors.yellow),
             _LegendItem(label: 'Safe', color: Colors.green),
           ],
         ),

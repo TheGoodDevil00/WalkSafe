@@ -43,6 +43,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String _logicApiStatus = 'Not queried yet';
   bool _isLoadingLocation = true;
   bool _isLoadingRoute = false;
+  bool _showSafetyZones = true;
 
   @override
   void initState() {
@@ -57,8 +58,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _loadHomeMap() async {
-    // Step 1: Build safety overlays from local mock data.
-    final List<SafetyZone> zones = _heatmapService.getMockSafetyZones();
+    // Step 1: Load safety overlays from backend (with offline cache fallback).
+    final List<SafetyZone> zones = await _heatmapService.loadSafetyZones();
     final List<CircleMarker> circles = zones.map(_mapZoneToCircle).toList();
 
     // Step 2: Resolve the user's location. Fallback to the default city center.
@@ -257,8 +258,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   CircleMarker _mapZoneToCircle(SafetyZone zone) {
     final Color baseColor = switch (zone.safetyLevel) {
-      SafetyLevel.unsafe => Colors.red,
-      SafetyLevel.moderate => Colors.yellow.shade700,
+      SafetyLevel.risky => Colors.red,
+      SafetyLevel.cautious => Colors.yellow.shade700,
       SafetyLevel.safe => Colors.green,
     };
 
@@ -281,7 +282,10 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _triggerSos() async {
-    await _sosService.sendEmergencyAlert();
+    final bool sent = await _sosService.sendEmergencyAlert(
+      latitude: _cameraTarget.latitude,
+      longitude: _cameraTarget.longitude,
+    );
     if (!mounted) {
       return;
     }
@@ -290,8 +294,12 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: const Text('SOS Alert Sent'),
-          content: const Text('Emergency contacts notified'),
+          title: Text(sent ? 'SOS Alert Sent' : 'SOS Offline Fallback'),
+          content: Text(
+            sent
+                ? 'Emergency alert has been recorded by backend.'
+                : 'Could not reach backend. Please call local emergency services directly.',
+          ),
           actions: <Widget>[
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
@@ -339,7 +347,7 @@ class _HomeScreenState extends State<HomeScreen> {
             mapController: _mapController,
             initialCenter: _cameraTarget,
             initialZoom: 14,
-            safetyOverlays: _heatmapCircles,
+            safetyOverlays: _showSafetyZones ? _heatmapCircles : <CircleMarker>[],
             routePolylines: _routePolylines,
             markers: _markers,
             onTap: _onMapTapped,
@@ -353,9 +361,32 @@ class _HomeScreenState extends State<HomeScreen> {
             right: 14,
             child: SafetyLegendCard(),
           ),
+          Positioned(
+            top: 68,
+            left: 14,
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    const Text('Safety Zones'),
+                    Switch(
+                      value: _showSafetyZones,
+                      onChanged: (bool value) {
+                        setState(() {
+                          _showSafetyZones = value;
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
           if (_selectedRoute != null)
             Positioned(
-              top: 74,
+              top: 126,
               left: 14,
               right: 14,
               child: Card(

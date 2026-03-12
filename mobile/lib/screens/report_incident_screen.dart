@@ -4,6 +4,7 @@ import 'package:latlong2/latlong.dart';
 
 import '../models/incident_report.dart';
 import '../services/incident_storage_service.dart';
+import '../services/reporting_api_service.dart';
 import '../widgets/walksafe_map_view.dart';
 
 class ReportIncidentScreen extends StatefulWidget {
@@ -25,6 +26,7 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
   ];
 
   final IncidentStorageService _storageService = IncidentStorageService();
+  final ReportingApiService _reportingApiService = ReportingApiService();
   final TextEditingController _descriptionController = TextEditingController();
 
   String _selectedIncidentType = _incidentTypes.first;
@@ -62,6 +64,19 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
       createdAtIso: DateTime.now().toIso8601String(),
     );
 
+    final int severity = _severityForType(_selectedIncidentType);
+    final String userHash =
+        'mobile-${DateTime.now().millisecondsSinceEpoch.toString()}';
+    final Map<String, dynamic>? remoteResponse = await _reportingApiService
+        .submitIncidentReport(
+          userHash: userHash,
+          incidentType: report.incidentType,
+          severity: severity,
+          latitude: report.latitude,
+          longitude: report.longitude,
+          description: report.description,
+        );
+
     await _storageService.saveReport(report);
     if (!mounted) {
       return;
@@ -73,8 +88,33 @@ class _ReportIncidentScreenState extends State<ReportIncidentScreen> {
 
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(const SnackBar(content: Text('Incident report submitted')));
+    ).showSnackBar(
+      SnackBar(
+        content: Text(
+          remoteResponse == null
+              ? 'Saved locally. Backend unavailable; will still affect offline safety scoring.'
+              : 'Incident report submitted and synced to backend.',
+        ),
+      ),
+    );
     Navigator.of(context).pop();
+  }
+
+  int _severityForType(String incidentType) {
+    final String normalized = incidentType.toLowerCase();
+    if (normalized.contains('stalking') || normalized.contains('harassment')) {
+      return 5;
+    }
+    if (normalized.contains('suspicious')) {
+      return 4;
+    }
+    if (normalized.contains('lighting')) {
+      return 3;
+    }
+    if (normalized.contains('infrastructure')) {
+      return 3;
+    }
+    return 3;
   }
 
   @override

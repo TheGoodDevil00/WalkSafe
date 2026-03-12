@@ -7,11 +7,12 @@ Future<void> main() async {
   // Ensures plugins (maps, location, storage) are initialized before runApp.
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize Supabase
-  await Supabase.initialize(
-    url: 'https://tzrouiuqpirmsemkodrt.supabase.co',
-    anonKey: 'sb_publishable_tvxltrMGcMPfhW86JUFkBg__BwKgGxu',
-  );
+  // Initialize Supabase only when environment values are provided.
+  const String supabaseUrl = String.fromEnvironment('SUPABASE_URL');
+  const String supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
+  if (supabaseUrl.isNotEmpty && supabaseAnonKey.isNotEmpty) {
+    await Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey);
+  }
 
   runApp(const WalkSafeApp());
 }
