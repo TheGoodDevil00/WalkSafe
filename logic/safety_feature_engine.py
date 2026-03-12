@@ -11,8 +11,8 @@ import httpx
 from shapely.geometry import LineString, Point
 from shapely.strtree import STRtree
 
-DEFAULT_SUPABASE_URL = "https://tzrouiuqpirmsemkodrt.supabase.co"
-DEFAULT_SUPABASE_ANON_KEY = "sb_publishable_tvxltrMGcMPfhW86JUFkBg__BwKgGxu"
+DEFAULT_SUPABASE_URL = ""
+DEFAULT_SUPABASE_ANON_KEY = ""
 DEFAULT_INCIDENT_TABLE = "incident_reports"
 
 LOGGER = logging.getLogger(__name__)
