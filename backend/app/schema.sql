@@ -1,5 +1,6 @@
 -- Enable PostGIS extension
 CREATE EXTENSION IF NOT EXISTS postgis;
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- Nodes: Represents intersections or points of interest
 CREATE TABLE IF NOT EXISTS nodes (
@@ -29,19 +30,53 @@ CREATE TABLE IF NOT EXISTS edges (
 
 CREATE INDEX IF NOT EXISTS idx_edges_geometry ON edges USING GIST(geometry);
 
--- Incidents
-CREATE TABLE IF NOT EXISTS incidents (
-    id BIGSERIAL PRIMARY KEY,
-    location GEOGRAPHY(POINT, 4326) NOT NULL,
-    type TEXT NOT NULL,
-    severity INT,
+-- Canonical incident report table used by risk scoring and user submissions.
+CREATE TABLE IF NOT EXISTS incident_reports (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_hash TEXT NOT NULL,
+    incident_type TEXT NOT NULL,
     description TEXT,
-    reported_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    verified BOOLEAN DEFAULT FALSE,
-    source TEXT
+    severity SMALLINT NOT NULL DEFAULT 3,
+    status TEXT NOT NULL DEFAULT 'pending',
+    confidence_score NUMERIC(5,2) NOT NULL DEFAULT 0.50,
+    latitude DOUBLE PRECISION NOT NULL,
+    longitude DOUBLE PRECISION NOT NULL,
+    location GEOGRAPHY(POINT, 4326) GENERATED ALWAYS AS (
+        ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
+    ) STORED,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    verified_at TIMESTAMP WITH TIME ZONE,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 
-CREATE INDEX IF NOT EXISTS idx_incidents_location ON incidents USING GIST(location);
+CREATE INDEX IF NOT EXISTS idx_incident_reports_location
+    ON incident_reports USING GIST(location);
+CREATE INDEX IF NOT EXISTS idx_incident_reports_created_at
+    ON incident_reports (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_incident_reports_status
+    ON incident_reports (status);
+
+-- Canonical emergency table used by SOS flow and alert auditing.
+CREATE TABLE IF NOT EXISTS emergency_alerts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_hash TEXT NOT NULL,
+    latitude DOUBLE PRECISION NOT NULL,
+    longitude DOUBLE PRECISION NOT NULL,
+    location GEOGRAPHY(POINT, 4326) GENERATED ALWAYS AS (
+        ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
+    ) STORED,
+    status TEXT NOT NULL DEFAULT 'triggered',
+    message TEXT,
+    contacts_notified INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    resolved_at TIMESTAMP WITH TIME ZONE,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX IF NOT EXISTS idx_emergency_alerts_location
+    ON emergency_alerts USING GIST(location);
+CREATE INDEX IF NOT EXISTS idx_emergency_alerts_created_at
+    ON emergency_alerts (created_at DESC);
 
 -- Users (Ephemeral)
 CREATE TABLE IF NOT EXISTS users (

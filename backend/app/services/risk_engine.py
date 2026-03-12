@@ -1,11 +1,16 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
+import logging
+import math
+import numbers
 
 import json
 
 from shapely.geometry import LineString, Point
 from shapely.strtree import STRtree
+
+from app.services.reporting_service import reporting_service
 
 try:
     from rtree import index as rtree_index
@@ -29,6 +34,7 @@ _dummy_loaded: bool = False
 
 _time_penalties: Dict[str, float] = {}
 _parsed_time_penalties: List[Tuple[int, int, float]] = []
+LOGGER = logging.getLogger(__name__)
 
 
 def _load_dummy_safety_dataset() -> None:
@@ -142,15 +148,45 @@ def _nearest_segment_for_point(lon: float, lat: float) -> Tuple[Dict[str, Any], 
         if _dummy_strtree is None:
             raise ValueError("Spatial index not initialized.")
         nearest_geom = _dummy_strtree.nearest(query_point)
-        idx = _dummy_geom_id_to_index.get(id(nearest_geom))  # type: ignore[arg-type]
-        if idx is None:
-            raise ValueError("Could not resolve nearest segment index.")
+        if isinstance(nearest_geom, numbers.Integral):
+            idx = int(nearest_geom)
+        else:
+            idx = _dummy_geom_id_to_index.get(id(nearest_geom))  # type: ignore[arg-type]
+            if idx is None:
+                # Fallback equality check when geometry object identity differs.
+                for candidate_idx, candidate_geom in enumerate(_dummy_geometries):
+                    if candidate_geom.equals(nearest_geom):  # type: ignore[arg-type]
+                        idx = candidate_idx
+                        break
+            if idx is None:
+                raise ValueError("Could not resolve nearest segment index.")
 
     segment_geom = _dummy_geometries[idx]
     segment_props = _dummy_properties[idx]
     # Distance is in degrees; used only as a relative proximity metric here.
     distance_to_query = float(segment_geom.distance(query_point))
     return segment_props, distance_to_query
+
+
+def _haversine_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    earth_radius_m = 6371000.0
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = (
+        math.sin(dphi / 2.0) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2.0) ** 2
+    )
+    return earth_radius_m * 2.0 * math.atan2(math.sqrt(a), math.sqrt(1.0 - a))
+
+
+def _normalize_safety_level(score: float) -> str:
+    if score >= 70.0:
+        return "SAFE"
+    if score >= 40.0:
+        return "CAUTIOUS"
+    return "RISKY"
 
 
 class RiskEngine:
@@ -160,6 +196,10 @@ class RiskEngine:
         self.w_crime = 0.4
         self.w_crowd = 0.2
         self.decay_halflife_hours = 24.0
+        self.incident_effect_radius_m = 180.0
+        self.incident_recency_halflife_hours = 72.0
+        self.max_incident_penalty = 45.0
+        self.incident_penalty_scale = 26.0
 
         # Load dummy safety dataset + spatial index on first initialization.
         _load_dummy_safety_dataset()
@@ -217,6 +257,8 @@ class RiskEngine:
         self,
         coordinates: List[Dict[str, float]],
         time_penalty: float,
+        incidents: List[Dict[str, Any]] | None = None,
+        current_time: datetime | None = None,
     ) -> List[Dict[str, Any]]:
         """
         Map a list of OSRM route coordinates to the closest dummy safety segments.
@@ -241,12 +283,24 @@ class RiskEngine:
                 lon=mid_lon,
                 lat=mid_lat,
             )
+            incident_penalty, incident_density, matched_incidents = (
+                self._compute_incident_penalty(
+                    lat=mid_lat,
+                    lon=mid_lon,
+                    incidents=incidents or [],
+                    current_time=current_time,
+                )
+            )
 
             # Base safety is provided by the dummy dataset; adjust it with
             # the current global time penalty.
             base_safety_score = float(segment_props.get("base_safety_score", 50.0))
             adjusted_safety_score = max(
-                0.0, min(100.0, base_safety_score - float(time_penalty))
+                0.0,
+                min(
+                    100.0,
+                    base_safety_score - float(time_penalty) - float(incident_penalty),
+                ),
             )
 
             # Distance weight comes from the precomputed segment length in meters.
@@ -262,10 +316,12 @@ class RiskEngine:
                     "start": start,
                     "end": end,
                     "segment_id": segment_props.get("segment_id"),
-                    "safety_level": segment_props.get("safety_level"),
+                    "safety_level": _normalize_safety_level(adjusted_safety_score),
                     "base_safety_score": base_safety_score,
                     "safety_score": adjusted_safety_score,
-                    "incident_density": segment_props.get("incident_density"),
+                    "incident_density": incident_density,
+                    "incident_penalty": incident_penalty,
+                    "incident_matches": matched_incidents,
                     "lighting_heuristic": segment_props.get("lighting_heuristic"),
                     "crowd_density": segment_props.get("crowd_density"),
                     "time_penalty": float(time_penalty),
@@ -277,16 +333,26 @@ class RiskEngine:
 
         return segments
 
-    def score_route(self, coordinates: List[Dict[str, float]]) -> Dict[str, Any]:
+    async def score_route(self, coordinates: List[Dict[str, float]]) -> Dict[str, Any]:
         """
         Score an OSRM route (list of coordinates) using the dummy safety dataset,
         incorporating global time-of-day penalties.
 
         Returns per-segment safety metrics and aggregate statistics.
         """
-        current_time_penalty = _get_current_time_penalty()
+        current_time = datetime.now(timezone.utc)
+        current_time_penalty = _get_current_time_penalty(current_time)
+        incidents: List[Dict[str, Any]] = []
+        try:
+            incidents = await reporting_service.get_recent_incidents(lookback_days=30)
+        except Exception as exc:
+            LOGGER.warning("Incident retrieval failed for dynamic scoring: %s", exc)
+
         segments = self.map_route_coordinates_to_segments(
-            coordinates, time_penalty=current_time_penalty
+            coordinates,
+            time_penalty=current_time_penalty,
+            incidents=incidents,
+            current_time=current_time,
         )
 
         total_distance = sum(seg.get("distance", 0.0) for seg in segments)
@@ -303,5 +369,114 @@ class RiskEngine:
                 "total_distance": total_distance,
                 "total_risk": total_risk,
                 "average_safety_score": average_safety_score,
+                "applied_incident_count": len(incidents),
             },
         }
+
+    def _compute_incident_penalty(
+        self,
+        *,
+        lat: float,
+        lon: float,
+        incidents: List[Dict[str, Any]],
+        current_time: datetime | None,
+    ) -> Tuple[float, float, int]:
+        if not incidents:
+            return 0.0, 0.0, 0
+
+        now = current_time or datetime.now(timezone.utc)
+        weighted_impact = 0.0
+        matched = 0
+
+        for incident in incidents:
+            incident_lat = _safe_float(incident.get("lat"))
+            incident_lon = _safe_float(incident.get("lon"))
+            if incident_lat is None or incident_lon is None:
+                continue
+
+            distance_m = _haversine_meters(lat, lon, incident_lat, incident_lon)
+            if distance_m > self.incident_effect_radius_m:
+                continue
+
+            status = str(incident.get("status", "pending")).lower()
+            if status in {"rejected", "dismissed", "spam"}:
+                continue
+
+            matched += 1
+            distance_factor = max(0.0, 1.0 - (distance_m / self.incident_effect_radius_m))
+            severity = _safe_float(incident.get("severity")) or 3.0
+            severity_factor = max(0.2, min(1.0, severity / 5.0))
+            incident_type_factor = self._incident_type_weight(
+                str(incident.get("incident_type", ""))
+            )
+            confidence = _safe_float(incident.get("confidence_score")) or 0.5
+            if confidence > 1.0:
+                confidence = min(1.0, confidence / 100.0)
+            confidence = max(0.1, min(1.0, confidence))
+            recency_factor = self._incident_recency_decay(
+                incident.get("created_at"), now=now
+            )
+            status_factor = 1.15 if status == "verified" else 1.0
+
+            weighted_impact += (
+                distance_factor
+                * severity_factor
+                * incident_type_factor
+                * confidence
+                * recency_factor
+                * status_factor
+            )
+
+        if matched == 0:
+            return 0.0, 0.0, 0
+
+        incident_penalty = min(
+            self.max_incident_penalty,
+            weighted_impact * self.incident_penalty_scale,
+        )
+        incident_density = min(100.0, (matched / 6.0) * 100.0)
+        return incident_penalty, incident_density, matched
+
+    def _incident_recency_decay(self, created_at: Any, *, now: datetime) -> float:
+        incident_time = _safe_datetime(created_at)
+        elapsed_hours = max(0.0, (now - incident_time).total_seconds() / 3600.0)
+        return 0.5 ** (elapsed_hours / self.incident_recency_halflife_hours)
+
+    def _incident_type_weight(self, incident_type: str) -> float:
+        normalized = incident_type.lower()
+        if "stalking" in normalized or "harassment" in normalized:
+            return 1.0
+        if "assault" in normalized or "violence" in normalized:
+            return 1.0
+        if "suspicious" in normalized:
+            return 0.9
+        if "lighting" in normalized:
+            return 0.75
+        if "infrastructure" in normalized:
+            return 0.7
+        return 0.8
+
+
+def _safe_float(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_datetime(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                return parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+        except ValueError:
+            pass
+    return datetime.now(timezone.utc)
